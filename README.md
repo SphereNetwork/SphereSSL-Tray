@@ -58,10 +58,29 @@ It’s designed to provide quick access, interactive features, and desktop integ
 
 ## Installation
 
+### Option 1: Download Prebuilt Release
+
 1. **Download** the latest release from the [Releases](https://github.com/kl3mta3/SphereSSL/releases) page.
 2. **Run the installer** (or EXE) on your Windows machine.
 3. On first launch, the Tray App should automatically connect to your SphereSSL server. If prompted, configure the server address in the app settings.
 4. **(Optional)** Enable "Start with Windows" from the tray icon menu.
+
+### Option 2: Building from Source
+
+1. **Clone this repository**:
+    ```bash
+    git clone https://github.com/kl3mta3/SphereSSL.git
+    ```
+2. **Build the project** using Visual Studio or the .NET CLI.
+3. **Locate the Tray App**:
+   - After building, the **SphereSSL.TrayApp** executable will be available in the `/SphereSSL.TrayApp/bin/Release` (or `/Debug`) folder.
+   - **Copy the built Tray App** into the main SphereSSL install directory
+4. **Run `SphereSSL.exe`** on your Windows machine.
+
+---
+
+> **Note:**  
+> The Tray App is built as part of the SphereSSL solution but must be run separately from the main web server. Make sure the Tray App is running for full desktop integration (file dialogs, notifications, explorer integration, etc).
 
 ---
 
@@ -69,10 +88,10 @@ It’s designed to provide quick access, interactive features, and desktop integ
 
 - Right-click the tray icon for menu options:
   - **Open Dashboard** (launches SphereSSL in your default browser)
-  - **Show Log Folder** (or similar actions)
+  - **Restart Server** 
   - **Quit**
 
-- The app runs quietly in the background, only popping up when needed or when an event occurs.
+- The app runs quietly in Tray, only popping up when needed or when an event occurs.
 
 ---
 
@@ -98,8 +117,31 @@ It’s designed to provide quick access, interactive features, and desktop integ
 
 ## License
 
-SphereSSL and the Tray App are licensed under the MIT License.  
-See [LICENSE](../LICENSE) for details.
+**SphereSSL- Tray** is open source, licensed under the **Business Source License 1.1 (BSL 1.1)**
+
+**Licensor:** Kenneth Lasyone (“Kenny”) / Sphere / SphereNetwork  
+**Change Date:** None (license will not automatically convert to a more permissive license).
+
+---
+
+**Permission is hereby granted** to any individual or entity (“You”) to use, copy, modify, and self-host this software for **non-commercial purposes only**.
+
+### You MAY NOT:
+- Copy, distribute, or sublicense this software, in whole or in part, for any commercial purpose.
+- Use this software, or any portion thereof, in any paid or revenue-generating service, SaaS, or product.
+- Rebrand, resell, or otherwise profit from this software **without prior written consent from the Licensor**.
+
+For any commercial use, or to obtain written permission, **contact:**  
+`Kl3mta3@gmail.com`
+
+Violation of these terms may result in revocation of this license and potential legal action.  
+Sorry, not sorry! Don’t make me come over there.
+
+---
+
+> THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND.
+
+[See the full Business Source License 1.1](https://mariadb.com/bsl11) for more details.
 
 ---
 
