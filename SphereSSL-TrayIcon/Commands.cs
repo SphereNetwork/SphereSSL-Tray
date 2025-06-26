@@ -74,6 +74,12 @@ namespace SphereSSL_TrayIcon
                     await OpenPathLocation(context);
                     break;
 
+                case "/restart/":
+
+                    await RestartServer();
+                    break;
+
+
                 default:
 
                     response.StatusCode = 404; 

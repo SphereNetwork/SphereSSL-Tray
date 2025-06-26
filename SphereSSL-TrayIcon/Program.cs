@@ -11,8 +11,6 @@ namespace SphereSSL_TrayIcon
         [STAThread]
         public static async Task Main(string[] args)
         {
-
-
             AppDomain.CurrentDomain.ProcessExit += async (s, e) =>
             {
                 await Commands.KillServer();
@@ -50,7 +48,6 @@ namespace SphereSSL_TrayIcon
             {
                 await Commands.RestartServer();
             });
-
 
             Commands.trayIcon.ContextMenuStrip.Items.Add("Help", null, (s, e) =>
             {
