@@ -79,6 +79,10 @@ namespace SphereSSL_TrayIcon
                     await RestartServer();
                     break;
 
+                case "/factory-reset/":
+
+                    await FactoryReset(context);
+                    break;
 
                 default:
 
@@ -310,7 +314,36 @@ namespace SphereSSL_TrayIcon
             await StartServer();
         }
 
+        public static async Task factoryReset(HttpListenerContext context)
+        {
 
+            var request = context.Request;
+            var rawPath = request.QueryString["path"];
+
+            await KillServer();
+
+            await Task.Delay(1000);
+
+            if (!string.IsNullOrWhiteSpace(rawPath))
+            {
+                var decodedPath = WebUtility.UrlDecode(rawPath);
+                if (decodedPath.StartsWith("file:///"))
+                    decodedPath = decodedPath.Replace("file:///", "").Replace('/', '\\');
+                if (Directory.Exists(decodedPath))
+                {
+                    try
+                    {
+                        Directory.Delete(decodedPath, true);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error deleting folder: {ex.Message}");
+                    }
+                }
+            }
+            await Task.Delay(1000);
+            await StartServer();
+        }
 
         public static void ShowFolderOpenedNotification(string decodedPath)
         {
