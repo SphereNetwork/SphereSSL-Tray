@@ -6,13 +6,16 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 using System.Runtime.InteropServices;
 using System.IO;
-using static System.Windows.Forms.VisualStyles.VisualStyleElement.StartPanel;
 using System.Text.Json;
 using SphereSSL_TrayIcon.Model;
-
+using Avalonia.Threading;
+using Avalonia.Controls.Diagnostics;
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Platform.Storage;
+using Avalonia;
 
 namespace SphereSSL_TrayIcon
 {
@@ -26,7 +29,7 @@ namespace SphereSSL_TrayIcon
         internal static int ListenerPort = 7172; // Port for the HTTP listener
         internal static string ListenerUrl = $"127.0.0.1"; // Base URL for SphereSSL
         internal static string ServerUrl = $"127.0.0.1"; // Base URL for SphereSSL
-        internal static NotifyIcon trayIcon;
+        internal static Avalonia.Controls.TrayIcon trayIcon;
         internal static string ConfigFilePath = "app.config";
         internal static string DefaultConfigFilePath = "default.config";
         internal static string dbPath = "cachedtempdata.dll"; // Default database path
@@ -117,7 +120,6 @@ namespace SphereSSL_TrayIcon
 
         public static async Task GetFolderPath(HttpListenerContext context)
         {
-
             string selectedPath = "";
             if (!FolderOpen)
             {
@@ -125,55 +127,77 @@ namespace SphereSSL_TrayIcon
 
                 try
                 {
-                    var t = new Thread(() =>
+                    if (OperatingSystem.IsWindows())
                     {
-                        using var form = new Form
-                        {
-                            StartPosition = FormStartPosition.CenterScreen,
-                            TopMost = true,
-                            ShowInTaskbar = false,
-                            WindowState = FormWindowState.Normal,
-                            FormBorderStyle = FormBorderStyle.FixedToolWindow, // Actually shows up
-                            Opacity = 0.01,
-                            Size = new System.Drawing.Size(300, 200)
-                        };
+                        // Avalonia folder picker using StorageProvider API
+                        var tcs = new TaskCompletionSource<string?>();
 
-                        form.Shown += (s, e) =>
+                        await Dispatcher.UIThread.InvokeAsync(async () =>
                         {
-                            form.TopMost = true;
-                            form.BringToFront();
-                            form.Activate();
-                            using var dialog = new FolderBrowserDialog();
-                            if (dialog.ShowDialog(form) == DialogResult.OK)
+                            var topLevel = TopLevel.GetTopLevel(Application.Current.ApplicationLifetime switch
                             {
-                                selectedPath = dialog.SelectedPath;
+                                IClassicDesktopStyleApplicationLifetime desktop => desktop.MainWindow,
+                                _ => null
+                            });
+
+                            if (topLevel?.StorageProvider != null)
+                            {
+                                var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+                                {
+                                    AllowMultiple = false,
+                                    Title = "Select Folder"
+                                });
+
+                                selectedPath = folders?.FirstOrDefault()?.Path?.ToString() ?? "";
                             }
-                            form.Close();
-                        };
 
-                        Application.Run(form);
-                    });
+                            tcs.SetResult(selectedPath);
+                        });
 
-                    t.SetApartmentState(ApartmentState.STA);
-                    t.Start();
-                    t.Join();
+                        selectedPath = await tcs.Task ?? "";
+                    }
+                    else if (OperatingSystem.IsLinux())
+                    {
+                        try
+                        {
+                            var process = new Process
+                            {
+                                StartInfo = new ProcessStartInfo
+                                {
+                                    FileName = "zenity",
+                                    Arguments = "--file-selection --directory",
+                                    RedirectStandardOutput = true,
+                                    UseShellExecute = false,
+                                    CreateNoWindow = true
+                                }
+                            };
+
+                            process.Start();
+                            selectedPath = process.StandardOutput.ReadLine() ?? "";
+                            process.WaitForExit();
+                        }
+                        catch
+                        {
+                            selectedPath = "";
+                        }
+                    }
 
                     var buffer = Encoding.UTF8.GetBytes(selectedPath);
                     context.Response.ContentLength64 = buffer.Length;
                     await context.Response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
                     context.Response.OutputStream.Close();
-                    FolderOpen = false;
                 }
-                catch (Exception ex)
+                catch
                 {
-
                     var errorBuffer = Encoding.UTF8.GetBytes("Error selecting folder.");
                     context.Response.ContentLength64 = errorBuffer.Length;
                     await context.Response.OutputStream.WriteAsync(errorBuffer, 0, errorBuffer.Length);
                     context.Response.OutputStream.Close();
+                }
+                finally
+                {
                     FolderOpen = false;
                 }
-
             }
         }
 
@@ -189,56 +213,30 @@ namespace SphereSSL_TrayIcon
                 {
                     var decodedPath = WebUtility.UrlDecode(rawPath);
                     if (decodedPath.StartsWith("file:///"))
-                        decodedPath = decodedPath.Replace("file:///", "").Replace('/', '\\');
+                        decodedPath = decodedPath.Replace("file:///", "").Replace('/', Path.DirectorySeparatorChar);
 
                     if (Directory.Exists(decodedPath))
                     {
-                        var t = new Thread(() =>
+                        if (OperatingSystem.IsWindows())
                         {
-                            using var form = new Form
+                            Process.Start("explorer.exe", $"\"{decodedPath}\"");
+                        }
+                        else if (OperatingSystem.IsLinux())
+                        {
+                            try
                             {
-                                StartPosition = FormStartPosition.CenterScreen,
-                                TopMost = true,
-                                ShowInTaskbar = false,
-                                WindowState = FormWindowState.Normal,
-                                FormBorderStyle = FormBorderStyle.None,
-                                Opacity = 0,
-                                Size = new System.Drawing.Size(1, 1)
-                            };
-
-                            form.Shown += (s, e) =>
+                                Process.Start("xdg-open", decodedPath);
+                            }
+                            catch
                             {
-                                form.TopMost = true;
-                                form.BringToFront();
-                                form.Activate();
-
-                                Process.Start("explorer.exe", $"\"{decodedPath}\"");
-
-                                Task.Delay(300).ContinueWith(_ => form.Close());
-                            };
-
-                            Application.Run(form);
-                        });
-                        t.SetApartmentState(ApartmentState.STA);
-                        t.Start();
-                        t.Join();
-
-                        // Set the Tag so the click handler knows which path to use
-                        trayIcon.Tag = decodedPath;
-
-                        // Remove previous handlers (if any) before adding new one
-                        trayIcon.BalloonTipClicked -= TrayIcon_BalloonTipClicked;
-                        trayIcon.BalloonTipClicked += TrayIcon_BalloonTipClicked;
-
-                        trayIcon.BalloonTipTitle = "Folder Opened";
-                        trayIcon.BalloonTipText = "If you don't see the folder, click here to open it again.";
-                        trayIcon.ShowBalloonTip(3000);
+                                // handle if xdg-open fails
+                            }
+                        }
                     }
                 }
                 response.StatusCode = 200;
                 await response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("OK"));
                 response.Close();
-
             }
             catch (Exception ex)
             {
@@ -249,64 +247,33 @@ namespace SphereSSL_TrayIcon
             }
         }
 
-        private static void TrayIcon_BalloonTipClicked(object sender, EventArgs e)
-        {
-            if (sender is NotifyIcon ni && ni.Tag is string decodedPath && Directory.Exists(decodedPath))
-            {
-                var t = new Thread(() =>
-                {
-                    using var form = new Form
-                    {
-                        StartPosition = FormStartPosition.CenterScreen,
-                        TopMost = true,
-                        ShowInTaskbar = true,
-                        Size = new System.Drawing.Size(200, 100)
-                    };
-                    form.Shown += (ss, ee) =>
-                    {
-                        form.BringToFront();
-                        form.Activate();
-                        Process.Start("explorer.exe", $"\"{decodedPath}\"");
-                        Task.Delay(300).ContinueWith(_ => form.Close());
-                    };
-                    Application.Run(form);
-                });
-                t.SetApartmentState(ApartmentState.STA);
-                t.Start();
-                t.Join();
-            }
-        }
+     
 
         public static async Task StartServer()
         {
             var processName = Path.GetFileNameWithoutExtension(kestrelPath);
-
-
             var existing = Process.GetProcessesByName(processName).FirstOrDefault();
             if (existing != null && !existing.HasExited)
             {
-
                 try
                 {
-
                     if (existing.MainModule.FileName != kestrelPath)
                     {
                         kestrelProcess = existing;
-                        Console.WriteLine($"Using existing process: {existing.Id} ({existing.MainModule.FileName})");
+                        if (Console.IsOutputRedirected || Console.OpenStandardOutput(1) != Stream.Null)
+                            Console.WriteLine("SphereSSLv2.exe not found!");
                         return;
                     }
                 }
-                catch
-                {
-
-                }
+                catch { }
 
                 return;
             }
 
             if (!File.Exists(kestrelPath))
             {
-                MessageBox.Show("SphereSSLv2.exe not found!", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+               
+                Console.WriteLine("SphereSSLv2.exe not found!");
                 return;
             }
 
@@ -411,46 +378,37 @@ namespace SphereSSL_TrayIcon
 
         public static void ShowFolderOpenedNotification(string decodedPath)
         {
-            trayIcon.BalloonTipTitle = "Folder Opened";
-            trayIcon.BalloonTipText = "If you don't see the folder, click here to open it again.";
-
-            trayIcon.BalloonTipClicked -= NotifyIcon_BalloonTipClicked; // Avoid double-registration
-            trayIcon.BalloonTipClicked += NotifyIcon_BalloonTipClicked;
-
-            trayIcon.Tag = decodedPath; // Store path for event handler
-
-            trayIcon.ShowBalloonTip(3000);
-        }
-
-        private static void NotifyIcon_BalloonTipClicked(object sender, EventArgs e)
-        {
-            var ni = sender as NotifyIcon;
-            if (ni?.Tag is string decodedPath && Directory.Exists(decodedPath))
+            try
             {
-                // This time, pop up a visible window for guaranteed focus (user-initiated)
-                var t = new Thread(() =>
+                if (OperatingSystem.IsWindows())
                 {
-                    using var form = new Form
+                    Process.Start(new ProcessStartInfo
                     {
-                        StartPosition = FormStartPosition.CenterScreen,
-                        TopMost = true,
-                        ShowInTaskbar = true, // Visible this time!
-                        Size = new System.Drawing.Size(200, 100)
-                    };
-                    form.Shown += (ss, ee) =>
-                    {
-                        form.BringToFront();
-                        form.Activate();
-                        Process.Start("explorer.exe", $"\"{decodedPath}\"");
-                        Task.Delay(300).ContinueWith(_ => form.Close());
-                    };
-                    Application.Run(form);
-                });
-                t.SetApartmentState(ApartmentState.STA);
-                t.Start();
-                t.Join();
+                        FileName = "powershell",
+                        Arguments = $"-Command \"[reflection.assembly]::loadwithpartialname('System.Windows.Forms');" +
+                                    $"[System.Windows.Forms.MessageBox]::Show('Folder opened: {decodedPath.Replace("\\", "\\\\")}')\"",
+                        CreateNoWindow = true,
+                        UseShellExecute = false
+                    });
+                }
+                else if (OperatingSystem.IsLinux())
+                {
+                    Process.Start("notify-send", $"\"Folder opened\" \"{decodedPath}\"");
+                }
+                else
+                {
+                    Console.WriteLine($"Folder opened: {decodedPath}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Notification failed: " + ex.Message);
             }
         }
+
+
+
+
 
         internal static async Task<StoredConfig> LoadConfigFile()
         {
