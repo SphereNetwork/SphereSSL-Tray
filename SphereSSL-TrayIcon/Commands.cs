@@ -9,6 +9,9 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
 using System.IO;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement.StartPanel;
+using System.Text.Json;
+using SphereSSL_TrayIcon.Model;
 
 
 namespace SphereSSL_TrayIcon
@@ -19,8 +22,14 @@ namespace SphereSSL_TrayIcon
         internal static string kestrelPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SphereSSLv2.exe");
         internal static string iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SphereSSL.ico");
         internal static bool FolderOpen = false;
-
+        internal static int ServerPort = 7171; // Default port for SphereSSL
+        internal static int ListenerPort = 7172; // Port for the HTTP listener
+        internal static string ListenerUrl = $"127.0.0.1"; // Base URL for SphereSSL
+        internal static string ServerUrl = $"127.0.0.1"; // Base URL for SphereSSL
         internal static NotifyIcon trayIcon;
+        internal static string ConfigFilePath = "app.config";
+        internal static string DefaultConfigFilePath = "default.config";
+        internal static string dbPath = "cachedtempdata.dll"; // Default database path
 
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
@@ -31,8 +40,12 @@ namespace SphereSSL_TrayIcon
         public static async Task StartAppListener()
         {
             var listener = new HttpListener();
-            listener.Prefixes.Add("http://localhost:7172/select-folder/");
-            listener.Prefixes.Add("http://localhost:7172/open-location/");
+            listener.Prefixes.Add($"http://{ListenerUrl}:{ListenerPort}/select-folder/");
+            listener.Prefixes.Add($"http://{ListenerUrl}:{ListenerPort}/open-location/");
+            listener.Prefixes.Add($"http://{ListenerUrl}:{ListenerPort}/restart/");
+            listener.Prefixes.Add($"http://{ListenerUrl}:{ListenerPort}/factory-reset/");
+            listener.Prefixes.Add($"http://{ListenerUrl}:{ListenerPort}/update-db-path/");
+            listener.Prefixes.Add($"http://{ListenerUrl}:{ListenerPort}/update-url-path/");
             listener.Start();
 
 
@@ -40,23 +53,22 @@ namespace SphereSSL_TrayIcon
 
             while (true)
             {
-     
+               
                 await ProcessRequest(listener).ConfigureAwait(false);
             }
         }
 
         public static async Task ProcessRequest(HttpListener listener)
         {
-
-
             var context = await listener.GetContextAsync();
+
             var response = context.Response;
-       
+
 
             if (context == null || context.Request.Url == null)
             {
 
-                response.StatusCode = 400; 
+                response.StatusCode = 400;
                 await response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("Invalid request"));
                 response.Close();
                 return;
@@ -65,28 +77,38 @@ namespace SphereSSL_TrayIcon
             switch (context.Request.Url.AbsolutePath)
             {
                 case "/select-folder/":
-                 
+
                     await GetFolderPath(context);
                     break;
 
                 case "/open-location/":
-                 
+
                     await OpenPathLocation(context);
                     break;
 
                 case "/restart/":
-
-                    await RestartServer();
+                   
+                    await RestartServer(context);
                     break;
 
                 case "/factory-reset/":
-
+                    Console.WriteLine("factory-reset-heard");
                     await FactoryReset(context);
+                    break;
+
+                case "/update-db-path/":
+                 
+                    await ChangeDbPath(context);
+                    break;
+
+                case "/update-url-path/":
+                    
+                    await ChangeServerPath(context);
                     break;
 
                 default:
 
-                    response.StatusCode = 404; 
+                    response.StatusCode = 404;
                     await response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("Invalid request"));
                     response.Close();
                     return;
@@ -95,7 +117,7 @@ namespace SphereSSL_TrayIcon
 
         public static async Task GetFolderPath(HttpListenerContext context)
         {
-         
+
             string selectedPath = "";
             if (!FolderOpen)
             {
@@ -144,16 +166,17 @@ namespace SphereSSL_TrayIcon
                 }
                 catch (Exception ex)
                 {
-                   
+
                     var errorBuffer = Encoding.UTF8.GetBytes("Error selecting folder.");
                     context.Response.ContentLength64 = errorBuffer.Length;
                     await context.Response.OutputStream.WriteAsync(errorBuffer, 0, errorBuffer.Length);
                     context.Response.OutputStream.Close();
                     FolderOpen = false;
                 }
-               
+
             }
         }
+
         public static async Task OpenPathLocation(HttpListenerContext context)
         {
             var request = context.Request;
@@ -179,7 +202,7 @@ namespace SphereSSL_TrayIcon
                                 ShowInTaskbar = false,
                                 WindowState = FormWindowState.Normal,
                                 FormBorderStyle = FormBorderStyle.None,
-                                Opacity = 0,         // Fully invisible!
+                                Opacity = 0,
                                 Size = new System.Drawing.Size(1, 1)
                             };
 
@@ -226,7 +249,6 @@ namespace SphereSSL_TrayIcon
             }
         }
 
-        // Handler for retrying on click
         private static void TrayIcon_BalloonTipClicked(object sender, EventArgs e)
         {
             if (sender is NotifyIcon ni && ni.Tag is string decodedPath && Directory.Exists(decodedPath))
@@ -257,16 +279,16 @@ namespace SphereSSL_TrayIcon
 
         public static async Task StartServer()
         {
-            var processName = Path.GetFileNameWithoutExtension(kestrelPath); 
+            var processName = Path.GetFileNameWithoutExtension(kestrelPath);
 
 
             var existing = Process.GetProcessesByName(processName).FirstOrDefault();
             if (existing != null && !existing.HasExited)
             {
-               
+
                 try
                 {
-                    
+
                     if (existing.MainModule.FileName != kestrelPath)
                     {
                         kestrelProcess = existing;
@@ -275,7 +297,7 @@ namespace SphereSSL_TrayIcon
                     }
                 }
                 catch
-                {  
+                {
 
                 }
 
@@ -296,10 +318,6 @@ namespace SphereSSL_TrayIcon
 
         public static async Task KillServer()
         {
-            var processName = Path.GetFileNameWithoutExtension(kestrelPath);
-            var existing = Process.GetProcessesByName(processName).FirstOrDefault();
-
-            Console.WriteLine($"Killing Process: {existing.Id} ({existing.MainModule.FileName})");
 
             if (kestrelProcess != null && !kestrelProcess.HasExited)
             {
@@ -307,42 +325,88 @@ namespace SphereSSL_TrayIcon
             }
         }
 
-        public static async Task RestartServer()
+        public static async Task RestartServer(HttpListenerContext context)
         {
-            await KillServer();
-            await Task.Delay(2000);
-            await StartServer();
+            var response = context.Response;
+            try
+            {
+                Console.WriteLine("Killing server...");
+                await KillServer();
+                Console.WriteLine("Restarting server...");
+                await StartServer();
+
+                Console.WriteLine("Server restarted.");
+
+                response.StatusCode = 200;
+                await response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("OK"));
+                response.Close();
+            }
+            catch (Exception ex)
+            {
+
+                Console.WriteLine($"Error: {ex.Message}");
+                response.StatusCode = 409;
+                await response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("Error Restarting Server."));
+                response.Close();
+            }
         }
 
-        public static async Task factoryReset(HttpListenerContext context)
+        public static async Task RestartServerTray()
         {
 
-            var request = context.Request;
-            var rawPath = request.QueryString["path"];
-
-            await KillServer();
-
-            await Task.Delay(1000);
-
-            if (!string.IsNullOrWhiteSpace(rawPath))
+            try
             {
-                var decodedPath = WebUtility.UrlDecode(rawPath);
-                if (decodedPath.StartsWith("file:///"))
-                    decodedPath = decodedPath.Replace("file:///", "").Replace('/', '\\');
-                if (Directory.Exists(decodedPath))
-                {
-                    try
-                    {
-                        Directory.Delete(decodedPath, true);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error deleting folder: {ex.Message}");
-                    }
-                }
+                Console.WriteLine("Killing server...");
+                await KillServer();
+                Console.WriteLine("Restarting server...");
+                await StartServer();
+
+                Console.WriteLine("Server restarted.");
+
             }
-            await Task.Delay(1000);
-            await StartServer();
+            catch (Exception ex)
+            {
+
+
+            }
+        }
+
+        public static async Task FactoryReset(HttpListenerContext context)
+        {
+
+                    Console.WriteLine("Performing factory reset...");
+            var request = context.Request;
+
+            var response = context.Response;
+
+            try
+            {
+                Console.WriteLine("Killing server...");
+                await KillServer();
+
+                if (System.IO.File.Exists(DefaultConfigFilePath))
+                {
+                        System.IO.File.Copy(DefaultConfigFilePath, ConfigFilePath, true);
+                }
+
+                Console.WriteLine("Resetting Config file..");
+
+                await StartServer();
+
+                Console.WriteLine("Server restarted Reset Complete.");
+                response.StatusCode = 200;
+                    await response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("OK"));
+                    response.Close();
+       
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error: {ex.Message}");
+                response.StatusCode = 400;
+                await response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("Error performing factory reset."));
+                response.Close();
+
+            }
         }
 
         public static void ShowFolderOpenedNotification(string decodedPath)
@@ -388,5 +452,134 @@ namespace SphereSSL_TrayIcon
             }
         }
 
+        internal static async Task<StoredConfig> LoadConfigFile()
+        {
+            try
+            {
+
+                string json = File.ReadAllText(ConfigFilePath);
+
+                var storedConfig = JsonSerializer.Deserialize<StoredConfig>(json);
+                Console.WriteLine(storedConfig.ToString());
+                if (storedConfig == null)
+                {
+                    throw new InvalidOperationException("Failed to deserialize node config.");
+                }
+              
+
+                ServerPort = storedConfig.ServerPort > 0 ? storedConfig.ServerPort : 7171;
+
+                ServerUrl = string.IsNullOrWhiteSpace(storedConfig.ServerURL)
+                ? "127.0.0.1"
+                : storedConfig.ServerURL;
+
+
+                dbPath = string.IsNullOrWhiteSpace(storedConfig.DatabasePath)
+                    ? "cachedtempdata.dll"
+                    : storedConfig.DatabasePath;
+
+                return storedConfig;
+
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("Failed to load config file.", ex);
+            }
+        }
+
+        public static async Task ChangeServerPath(HttpListenerContext context)
+        {
+            var request = context.Request;
+            var response = context.Response;
+            Console.WriteLine("ChangeServerPath called");
+            try
+            {
+                await KillServer();
+                string body;
+                using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+                {
+                    body = await reader.ReadToEndAsync();
+                }
+
+              
+                var parsedRequest = JsonSerializer.Deserialize<UpdateServerRequest>(body);
+
+
+                StoredConfig config = await LoadConfigFile();
+                ServerUrl = parsedRequest.ServerUrl;
+                ServerPort = parsedRequest.ServerPort;
+
+                config.ServerURL = parsedRequest.ServerUrl;
+                config.ServerPort = parsedRequest.ServerPort;
+
+                string json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+                await File.WriteAllTextAsync(ConfigFilePath, json);
+
+                await Task.Delay(200);
+
+                await StartServer();
+
+                response.StatusCode = 200;
+                await response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("OK"));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error: {ex.Message}");
+                response.StatusCode = 400;
+                await response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("Error changing database path."));
+            }
+            finally
+            {
+                response.Close();
+            }
+        }
+
+        public static async Task ChangeDbPath(HttpListenerContext context)
+        {
+            Console.WriteLine("ChangeDbPath called");
+            var request = context.Request;
+            var rawPath = request.QueryString["path"];
+            var response = context.Response;
+
+            try
+            {
+                await KillServer();
+              
+                if (!string.IsNullOrWhiteSpace(rawPath))
+                {
+                    StoredConfig config =await LoadConfigFile();
+
+                    var oldPath = config.DatabasePath;
+                    dbPath = rawPath;
+                   
+                    config.DatabasePath = dbPath;
+
+                    
+                    string json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+                    await File.WriteAllTextAsync(ConfigFilePath, json);
+                    await Task.Delay(200);
+
+                    await StartServer();
+
+                    response.StatusCode = 200;
+                    await response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("OK"));
+                    response.Close();
+                }
+                else
+                {
+                    response.StatusCode = 400;
+                    await response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("Invalid path for factory reset."));
+                    response.Close();
+                }
+
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error: {ex.Message}");
+                response.StatusCode = 400;
+                await response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("Error changing database path."));
+                response.Close();
+            }
+        }
     }
 }
